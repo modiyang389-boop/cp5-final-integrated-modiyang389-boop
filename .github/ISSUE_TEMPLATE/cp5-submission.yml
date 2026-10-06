@@ -1,0 +1,140 @@
+name: CP5 Submission — Final Integrated Challenge
+description: Submit the completed public CP5 repository you created and developed independently.
+title: "[CP5 Submission] Final Integrated Challenge"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Checkpoint 5 — Final Integrated GitHub Challenge
+
+        Submit only after:
+        - you have inspected your own CP5 Pull Request and left a clear self-check message in the Conversation before merge;
+        - the Pull Request is merged into `main`;
+        - the CP5 Issue is closed;
+        - both the Issue and Pull Request finish in **Done** on the same Project board.
+
+        Required repository: `cp5-final-integrated-YOUR-GITHUB-USERNAME`  
+        Required branch: `cp5-YOUR-GITHUB-USERNAME`
+
+  - type: markdown
+    attributes:
+      value: |
+        **Repository URL and GitHub username are detected automatically.**
+        CP5 finds the required public repository from the account that opens this submission.
+
+  - type: input
+    id: project_url
+    attributes:
+      label: GitHub Project URL
+      description: Paste the Project URL that tracks both your CP5 Issue and Pull Request.
+    validations:
+      required: true
+
+  - type: input
+    id: project_statuses
+    attributes:
+      label: Project Statuses Used
+      description: Enter exactly the workflow you used.
+      placeholder: Todo → In Progress → Review → Done
+    validations:
+      required: true
+
+  - type: textarea
+    id: q1
+    attributes:
+      label: Question 1 — Feature Branch
+      description: Why should this feature be implemented on a feature branch instead of directly on main?
+    validations:
+      required: true
+
+  - type: textarea
+    id: q2
+    attributes:
+      label: Question 2 — Commit vs Push
+      description: Explain the difference between git commit and git push.
+    validations:
+      required: true
+
+  - type: textarea
+    id: q3
+    attributes:
+      label: Question 3 — Origin
+      description: What does origin mean in your local repository?
+    validations:
+      required: true
+
+  - type: textarea
+    id: q4
+    attributes:
+      label: Question 4 — Issue Before Coding
+      description: Why create and track an Issue before or while implementing the feature?
+    validations:
+      required: true
+
+  - type: textarea
+    id: q5
+    attributes:
+      label: Question 5 — Pull Request, Self-Check, and Merge
+      description: What should you inspect in a Pull Request before merging changes into main?
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug_a
+    attributes:
+      label: Debugging Scenario A — You are on main
+      description: You realize you started editing on main. What do you inspect first, and how do you recover before committing the feature to main?
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug_b
+    attributes:
+      label: Debugging Scenario B — File missing from commit
+      description: You committed, but one intended file is missing. What do you inspect and what do you do next?
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug_c
+    attributes:
+      label: Debugging Scenario C — No upstream branch
+      description: git push reports that the current branch has no upstream branch. Explain the correct recovery.
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug_d
+    attributes:
+      label: Debugging Scenario D — Wrong remote URL
+      description: You discover origin points to the wrong GitHub repository. What command helps diagnose it, and how would you correct it?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reflection
+    attributes:
+      label: Reflection
+      description: Which part of the complete workflow required the most judgment, and why?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: integrity
+    attributes:
+      label: Completion Check
+      options:
+        - label: I created the CP5 repository myself with GitHub → New repository; I did not fork or use a template.
+          required: true
+        - label: I implemented the feature through the required cp5-USERNAME branch.
+          required: true
+        - label: My Project has Todo, In Progress, Review, and Done.
+          required: true
+        - label: My CP5 Issue and Pull Request are tracked in the same Project and finish in Done.
+          required: true
+        - label: I inspected my Pull Request and left a clear self-check message in the Conversation before I merged it.
+          required: true
+        - label: The Pull Request is merged and the linked CP5 Issue is closed.
+          required: true
+        - label: I did not include passwords, API keys, tokens, or other secrets.
+          required: true

@@ -1,0 +1,58 @@
+name: CP5 — Reusable Student Score
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync CP5 grade to student repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const marker = '<!-- klis-cp5-local-score -->';
+            let grade = null;
+            const gradeUrl = `https://raw.githubusercontent.com/KLIS-CS/GitHub-Final-Integrated-Challenge/grades/.cp5-grades/${encodeURIComponent(owner.toLowerCase())}.json?ts=${Date.now()}`;
+            const response = await fetch(gradeUrl, { headers: { 'User-Agent': 'KLIS-CS-CP5-Student-Score' } });
+            if (response.ok) grade = await response.json();
+            else if (response.status !== 404) core.warning(`CP5 grade sync returned HTTP ${response.status}.`);
+
+            const automatic = Number.isInteger(grade?.automaticAtMother) ? grade.automaticAtMother : 0;
+            const teacher = Number.isInteger(grade?.teacherScore) ? grade.teacherScore : null;
+            const total = teacher === null ? null : automatic + teacher;
+            const feedback = grade?.feedback || '';
+            const finalLine = total === null ? 'pending teacher review' : `${total}/100`;
+            const status = !grade ? '⚪ **No mother-repository submission has been published yet.**' : teacher === null ? '🔵 **Submission found — awaiting teacher review.**' : `✅ **FINAL SCORE: ${total}/100**`;
+            const feedbackBlock = teacher === null ? 'Teacher feedback will appear here after the manual grade is published.' : feedback ? `> ${feedback.replace(/\n/g, '\n> ')}` : '> Teacher grade published. No written feedback was included.';
+
+            const body = `${marker}
+            # CP5 — Score
+
+            **Repository:** https://github.com/${owner}/${repo}  
+            **Automatic score:** ${automatic}/60  
+            **Teacher score:** ${teacher === null ? 'awaiting review' : `${teacher}/40${grade?.grader ? ` by @${grade.grader}` : ''}`}  
+            **Final score:** ${finalLine}
+
+            ${status}
+
+            ## Teacher feedback
+            ${feedbackBlock}
+
+            ## Mother repository
+            ${grade?.submissionIssue ? `[Open CP5 submission and grading record](${grade.submissionIssue})` : '[Submit CP5](https://github.com/KLIS-CS/GitHub-Final-Integrated-Challenge/issues/new?template=cp5-submission.yml)'}
+
+            This Issue refreshes when **CP5 — Student Score** runs in your repository.
+            `;
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'all', per_page: 100 });
+            const existing = issues.find(i => !i.pull_request && i.body?.includes(marker));
+            if (existing) await github.rest.issues.update({ owner, repo, issue_number: existing.number, state: 'open', title: 'CP5 — Score', body });
+            else await github.rest.issues.create({ owner, repo, title: 'CP5 — Score', body });
+
+            await core.summary.addHeading(`CP5: ${total === null ? 'pending' : `${total}/100`}`).addRaw(`Automatic: ${automatic}/60\n`).addRaw(`Teacher: ${teacher === null ? 'awaiting review' : `${teacher}/40`}\n`).write();

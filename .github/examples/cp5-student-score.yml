@@ -1,0 +1,14 @@
+name: CP5 — Student Score
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '47 * * * *'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  score:
+    uses: KLIS-CS/GitHub-Final-Integrated-Challenge/.github/workflows/student-score-reusable.yml@main

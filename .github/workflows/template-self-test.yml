@@ -1,0 +1,75 @@
+name: CP5 Assessment Self-Test
+
+on:
+  push:
+    branches: [main]
+    paths: ['README.md','TEACHER-GRADING.md','.github/**']
+  pull_request:
+    branches: [main]
+    paths: ['README.md','TEACHER-GRADING.md','.github/**']
+
+permissions:
+  contents: read
+
+jobs:
+  structural-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate CP5 from-scratch portal
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in             README.md             TEACHER-GRADING.md             .github/ISSUE_TEMPLATE/cp5-submission.yml             .github/workflows/grade-external-submission.yml             .github/workflows/publish-grade.yml             .github/workflows/student-score-reusable.yml             .github/examples/cp5-student-score.yml; do
+            test -f "$f" || { echo "Missing $f"; exit 1; }
+          done
+
+          grep -q 'do NOT copy this repository' README.md
+          grep -q 'GitHub → New repository' README.md
+          grep -q 'cp5-final-integrated-YOUR-GITHUB-USERNAME' README.md
+          grep -q 'cp5-YOUR-GITHUB-USERNAME' README.md
+          grep -q 'Todo → In Progress → Review → Done' README.md
+          ! grep -q 'APPROVED' README.md
+          grep -q 'merge' README.md
+          grep -q 'same CP5 Submission Issue' README.md
+          grep -q 'single source of truth' README.md
+
+          grep -q 'detected automatically' .github/ISSUE_TEMPLATE/cp5-submission.yml
+          grep -q 'Todo, In Progress, Review, and Done' .github/ISSUE_TEMPLATE/cp5-submission.yml
+          grep -q 'self-check message' .github/ISSUE_TEMPLATE/cp5-submission.yml
+          grep -q 'Pull Request is merged' .github/ISSUE_TEMPLATE/cp5-submission.yml
+          grep -q 'Debugging Scenario A' .github/ISSUE_TEMPLATE/cp5-submission.yml
+          grep -q 'Debugging Scenario D' .github/ISSUE_TEMPLATE/cp5-submission.yml
+
+          grep -q 'discoverRepositoryUrl' .github/workflows/grade-external-submission.yml
+          grep -q "state=all" .github/workflows/grade-external-submission.yml
+          grep -q '/comments?per_page=100' .github/workflows/grade-external-submission.yml
+          grep -q 'checkPattern' .github/workflows/grade-external-submission.yml
+          grep -q "c.user?.login?.toLowerCase() === student.toLowerCase()" .github/workflows/grade-external-submission.yml
+          grep -q 'checkBeforeMerge' .github/workflows/grade-external-submission.yml
+          grep -q 'Question 5 — Pull Request, Self-Check, and Merge' .github/workflows/grade-external-submission.yml
+          grep -q 'mergedAfterCheck' .github/workflows/grade-external-submission.yml
+          grep -q 'issueClosedAfterMerge' .github/workflows/grade-external-submission.yml
+          grep -q 'Todo/In Progress/Review/Done' .github/workflows/grade-external-submission.yml
+          grep -q '/manual-grade' .github/workflows/grade-external-submission.yml
+          grep -q 'Workflow independence: 0/10' .github/workflows/grade-external-submission.yml
+          grep -q 'Project evidence: 0/5' .github/workflows/grade-external-submission.yml
+          grep -q 'Concepts: 0/10' .github/workflows/grade-external-submission.yml
+          grep -q 'Debugging: 0/10' .github/workflows/grade-external-submission.yml
+          grep -q 'Reflection: 0/5' .github/workflows/grade-external-submission.yml
+          grep -q '\*\*Final score:\*\*' .github/workflows/grade-external-submission.yml
+
+          grep -q 'Todo / In Progress / Review / Done' TEACHER-GRADING.md
+          ! grep -q 'APPROVED' TEACHER-GRADING.md
+
+          grep -q '.cp5-grades/' .github/workflows/publish-grade.yml
+          grep -q 'klis-cp5-local-score' .github/workflows/student-score-reusable.yml
+          ! grep -q 'Issue Number:' submission.md
+          ! grep -q 'Pull Request Number:' submission.md
+          echo 'CP5 full-workflow assessment portal is valid.'
+
+      - name: Validate workflow YAML syntax
+        shell: bash
+        run: |
+          ruby -e "require 'yaml'; Dir['.github/workflows/*.yml'].each { |f| YAML.load_file(f); puts \"OK #{f}\" }"

@@ -1,0 +1,419 @@
+name: CP5 — From-Scratch Submission Grader
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  grade:
+    if: >-
+      ${{
+        !github.event.issue.pull_request &&
+        (
+          startsWith(github.event.issue.title, '[CP5 Submission] Final Integrated Challenge') ||
+          contains(github.event.issue.body, '### Practice Repository URL')
+        )
+      }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Grade public CP5 repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue = context.payload.issue;
+            const issueNumber = issue.number;
+            const student = issue.user.login;
+            const marker = '<!-- klis-cp5-external-score -->';
+            const allowedGraders = new Set(['hbycwyh2008']);
+
+            const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const section = label => {
+              const re = new RegExp(`### ${escapeRegExp(label)}\\s*\\n+([\\s\\S]*?)(?=\\n### |$)`, 'i');
+              const value = issue.body?.match(re)?.[1]?.trim() || '';
+              return value === '_No response_' ? '' : value;
+            };
+
+            const parseRepoUrl = value => {
+              try {
+                const parsed = new URL((value || '').trim());
+                if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'github.com') return null;
+                const parts = parsed.pathname.split('/').filter(Boolean);
+                if (parts.length < 2) return null;
+                return { owner: parts[0], repo: parts[1].replace(/\.git$/i, '') };
+              } catch {
+                return null;
+              }
+            };
+
+            async function publicJson(url) {
+              const r = await fetch(url, {
+                headers: {
+                  Accept: 'application/vnd.github+json',
+                  'User-Agent': 'KLIS-CS-CP5-Grader'
+                }
+              });
+              if (r.status === 403 || r.status === 429) {
+                throw new Error('GitHub public API rate limit reached. Re-run later; this is not a student error.');
+              }
+              if (r.status === 404) return null;
+              if (!r.ok) throw new Error(`GitHub API returned ${r.status} for ${url}`);
+              return await r.json();
+            }
+
+            async function publicText(url) {
+              const r = await fetch(url, { headers: { 'User-Agent': 'KLIS-CS-CP5-Grader' } });
+              if (r.status === 404) return '';
+              if (!r.ok) throw new Error(`Unable to read repository file (${r.status}).`);
+              return await r.text();
+            }
+
+            const expectedRepo = `cp5-final-integrated-${student}`;
+            const expectedBranch = `cp5-${student}`;
+
+            async function discoverRepositoryUrl() {
+              try {
+                const exact = await github.rest.repos.get({ owner: student, repo: expectedRepo });
+                if (exact.data && exact.data.private === false) return exact.data.html_url;
+              } catch (error) {
+                if (error.status !== 404) core.warning(`CP5 repository lookup failed: ${error.message}`);
+              }
+              return '';
+            }
+
+            let repositoryUrl = section('Practice Repository URL');
+            if (!repositoryUrl) repositoryUrl = await discoverRepositoryUrl();
+            const statedUsername = section('GitHub Username').replace(/^@/, '').trim() || student;
+            const projectUrl = section('GitHub Project URL');
+            const projectStatuses = section('Project Statuses Used');
+
+            if (repositoryUrl && !section('Practice Repository URL')) {
+              const autoDetected = [
+                issue.body || '',
+                '',
+                '### Practice Repository URL',
+                repositoryUrl,
+                '',
+                '### GitHub Username',
+                student
+              ].join('\n');
+              await github.rest.issues.update({
+                owner, repo, issue_number: issueNumber, body: autoDetected
+              });
+            }
+
+            const parsedRepo = parseRepoUrl(repositoryUrl);
+
+            let meta = null;
+            let repoIssues = [];
+            let repoPulls = [];
+            let pr = null;
+            let prFiles = [];
+            let prCommits = [];
+            let prConversationComments = [];
+            let readme = '';
+            let gitignore = '';
+            let license = '';
+            let indexJs = '';
+
+            if (parsedRepo) {
+              const repoApi = `https://api.github.com/repos/${encodeURIComponent(parsedRepo.owner)}/${encodeURIComponent(parsedRepo.repo)}`;
+              meta = await publicJson(repoApi);
+
+              if (meta && meta.private === false) {
+                repoIssues = await publicJson(`${repoApi}/issues?state=all&per_page=100`) || [];
+                repoPulls = await publicJson(`${repoApi}/pulls?state=all&per_page=100`) || [];
+
+                const summaries = repoPulls
+                  .filter(p =>
+                    p.head?.ref === expectedBranch &&
+                    p.base?.ref === 'main' &&
+                    p.user?.login?.toLowerCase() === student.toLowerCase()
+                  )
+                  .sort((x, y) => y.number - x.number);
+
+                if (summaries[0]) {
+                  pr = await publicJson(`${repoApi}/pulls/${summaries[0].number}`);
+                  prFiles = await publicJson(`${repoApi}/pulls/${summaries[0].number}/files?per_page=100`) || [];
+                  prCommits = await publicJson(`${repoApi}/pulls/${summaries[0].number}/commits?per_page=100`) || [];
+                  prConversationComments = await publicJson(`${repoApi}/issues/${summaries[0].number}/comments?per_page=100`) || [];
+                }
+
+                const refForFiles = pr?.head?.sha || expectedBranch;
+                const rawBase = `https://raw.githubusercontent.com/${encodeURIComponent(parsedRepo.owner)}/${encodeURIComponent(parsedRepo.repo)}/${encodeURIComponent(refForFiles)}`;
+
+                [readme, gitignore, indexJs] = await Promise.all([
+                  publicText(`${rawBase}/README.md`),
+                  publicText(`${rawBase}/.gitignore`),
+                  publicText(`${rawBase}/src/index.js`)
+                ]);
+
+                for (const candidate of ['LICENSE', 'LICENSE.md', 'LICENSE.txt']) {
+                  const value = await publicText(`${rawBase}/${candidate}`);
+                  if (value) { license = value; break; }
+                }
+              }
+            }
+
+            const templateSource = meta?.template_repository?.full_name || '';
+            const repoAccessible = Boolean(meta && meta.private === false);
+            const ownerMatches = Boolean(
+              meta &&
+              meta.owner?.login?.toLowerCase() === student.toLowerCase() &&
+              statedUsername.toLowerCase() === student.toLowerCase()
+            );
+            const nameMatches = Boolean(meta && meta.name?.toLowerCase() === expectedRepo.toLowerCase());
+            const fromScratch = Boolean(meta && meta.fork === false && !templateSource);
+            const mainExists = Boolean(meta?.default_branch === 'main');
+
+            let repoScore = 0;
+            if (repoAccessible) repoScore += 2;
+            if (ownerMatches) repoScore += 2;
+            if (nameMatches) repoScore += 2;
+            if (fromScratch) repoScore += 2;
+            if (mainExists) repoScore += 2;
+
+            const meaningfulReadme = readme.trim().length >= 120 && /^#\s+\S/m.test(readme);
+            const meaningfulIgnore = gitignore.split(/\r?\n/).some(line => line.trim() && !line.trim().startsWith('#'));
+            const substantialLicense = license.trim().length >= 400 && /(copyright|permission|license|licensed)/i.test(license);
+            const meaningfulJs = indexJs.trim().length >= 30 && /(welcome|hello|document\.|console\.|textContent|innerHTML)/i.test(indexJs);
+
+            let fileScore = 0;
+            if (meaningfulReadme) fileScore += 2;
+            if (meaningfulIgnore) fileScore += 2;
+            if (substantialLicense) fileScore += 2;
+            if (meaningfulJs) fileScore += 4;
+
+            const changedPaths = prFiles.map(f => f.filename);
+            let branchScore = 0;
+            if (pr?.head?.ref === expectedBranch) branchScore += 4;
+            if (prCommits.length >= 1) branchScore += 3;
+            if (changedPaths.includes('src/index.js') && changedPaths.includes('README.md')) branchScore += 3;
+
+            const studentIssues = repoIssues.filter(i =>
+              !i.pull_request &&
+              i.user?.login?.toLowerCase() === student.toLowerCase()
+            );
+            const cpIssue = studentIssues.find(i => /^\[CP5\]/i.test(i.title || ''));
+            const issueBody = cpIssue?.body || '';
+            const checklistCount =
+              (issueBody.match(/- \[ \]/g) || []).length +
+              (issueBody.match(/- \[[xX]\]/g) || []).length;
+            const hasLabel = Boolean(cpIssue?.labels?.length);
+            const assignedToSelf = Boolean(
+              cpIssue?.assignees?.some(a => a.login?.toLowerCase() === student.toLowerCase())
+            );
+
+            const closesIssue = Boolean(
+              cpIssue && pr &&
+              new RegExp(`\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#${cpIssue.number}\\b`, 'i')
+                .test(pr.body || '')
+            );
+
+            const checkPattern = /\b(check(?:ed|ing)?|review(?:ed|ing)?|verified|tested|lgtm|looks good|ready to merge)\b/i;
+            const checkMessages = prConversationComments
+              .filter(c =>
+                c.user?.type === 'User' &&
+                c.user?.login?.toLowerCase() === student.toLowerCase() &&
+                c.created_at &&
+                checkPattern.test(c.body || '')
+              )
+              .sort((x, y) => new Date(x.created_at) - new Date(y.created_at));
+
+            const checkBeforeMerge = checkMessages.find(c =>
+              pr?.merged_at && new Date(c.created_at) <= new Date(pr.merged_at)
+            ) || null;
+            const mergedAfterCheck = Boolean(pr?.merged_at && checkBeforeMerge);
+            const issueClosedAfterMerge = Boolean(
+              cpIssue?.state === 'closed' &&
+              cpIssue.closed_at &&
+              pr?.merged_at &&
+              new Date(cpIssue.closed_at) >= new Date(pr.merged_at)
+            );
+
+            let issueScore = 0;
+            if (cpIssue) issueScore += 2;
+            if (checklistCount >= 2) issueScore += 2;
+            if (hasLabel) issueScore += 2;
+            if (assignedToSelf) issueScore += 2;
+            if (issueClosedAfterMerge) issueScore += 2;
+
+            let prScore = 0;
+            if (pr?.head?.ref === expectedBranch && pr?.base?.ref === 'main') prScore += 2;
+            if (closesIssue) prScore += 2;
+            if (checkBeforeMerge) prScore += 3;
+            if (mergedAfterCheck) prScore += 3;
+
+            const conceptualLabels = [
+              'Question 1 — Feature Branch',
+              'Question 2 — Commit vs Push',
+              'Question 3 — Origin',
+              'Question 4 — Issue Before Coding',
+              'Question 5 — Pull Request, Self-Check, and Merge'
+            ];
+            const debugLabels = [
+              'Debugging Scenario A — You are on main',
+              'Debugging Scenario B — File missing from commit',
+              'Debugging Scenario C — No upstream branch',
+              'Debugging Scenario D — Wrong remote URL'
+            ];
+            const conceptsComplete = conceptualLabels.every(label => section(label).trim().length >= 40);
+            const debuggingComplete = debugLabels.every(label => section(label).trim().length >= 40);
+            const reflectionComplete = section('Reflection').trim().length >= 40;
+
+            const projectUrlValid =
+              /^https:\/\/github\.com\/(?:users|orgs)\/[^/]+\/projects\/\d+/i.test(projectUrl);
+            const statusesText = projectStatuses.toLowerCase();
+            const requiredStatusesRecorded =
+              ['todo', 'in progress', 'review', 'done'].every(status => statusesText.includes(status));
+            const projectEvidencePresent = projectUrlValid && requiredStatusesRecorded;
+
+            let submissionScore = 0;
+            if (projectEvidencePresent) submissionScore += 2;
+            if (conceptsComplete) submissionScore += 3;
+            if (debuggingComplete) submissionScore += 4;
+            if (reflectionComplete) submissionScore += 1;
+
+            const checks = [
+              ['Repository created from scratch', repoScore, 10,
+                !repoAccessible ? 'Repository not found or not public.' :
+                !ownerMatches ? `Repository and submitted username must belong to @${student}.` :
+                !nameMatches ? `Repository must be named ${expectedRepo}.` :
+                !fromScratch ? 'Do not fork or create the CP5 project from a template.' :
+                !mainExists ? 'Default branch must be main.' :
+                'Public, correctly named, student-owned repository created from scratch.'],
+              ['Project files on feature work', fileScore, 10,
+                `${[meaningfulReadme, meaningfulIgnore, substantialLicense, meaningfulJs].filter(Boolean).length}/4 required file checks passed.`],
+              ['Feature branch + PR commit evidence', branchScore, 10,
+                !pr ? `Create a Pull Request from ${expectedBranch} to main.` :
+                `head=${pr.head?.ref}; commits=${prCommits.length}; changed=${changedPaths.join(', ') || 'none'}`],
+              ['CP5 Issue quality + closure', issueScore, 10,
+                cpIssue
+                  ? `Issue #${cpIssue.number}; checklist=${checklistCount}; label=${hasLabel}; assigned=${assignedToSelf}; closed-after-merge=${issueClosedAfterMerge}`
+                  : 'Create a student-owned Issue whose title begins [CP5].'],
+              ['Self-checked merged PR + Issue connection', prScore, 10,
+                !pr ? `Create the required Pull Request from ${expectedBranch} to main.` :
+                !closesIssue ? `PR #${pr.number} must use Closes/Fixes/Resolves #${cpIssue?.number || 'N'}.` :
+                !checkBeforeMerge ? `PR #${pr.number} needs a clear self-check message from the student before merge.` :
+                !mergedAfterCheck ? `Merge PR #${pr.number} only after the student self-check message.` :
+                `PR #${pr.number} self-checked by @${checkBeforeMerge.user.login} before merge.`],
+              ['Submission / Project / debugging responses', submissionScore, 10,
+                submissionScore === 10
+                  ? 'Project URL, Todo/In Progress/Review/Done, concepts, debugging, and reflection are complete.'
+                  : 'Complete Project evidence, concepts, debugging responses, and reflection.']
+            ];
+
+            const automatic = checks.reduce((sum, [, earned]) => sum + earned, 0);
+
+            function parseManualGrade(body) {
+              if (!body) return null;
+              const legacy = body.match(/(?:^|\n)\s*\/manual-grade\s+(40|[0-3]?\d)(?:\s|$)/i);
+              if (legacy) return { score: Number(legacy[1]), breakdown: null };
+              if (!/(?:^|\n)\s*\/manual-grade\s*(?:\n|$)/i.test(body)) return null;
+
+              const readScore = (label, max) => {
+                const m = body.match(new RegExp(`^\\s*${escapeRegExp(label)}:\\s*([0-9]|10)\\s*\\/\\s*${max}\\s*$`, 'mi'));
+                if (!m) return null;
+                const n = Number(m[1]);
+                return n <= max ? n : null;
+              };
+
+              const breakdown = {
+                workflow: readScore('Workflow independence', 10),
+                project: readScore('Project evidence', 5),
+                concepts: readScore('Concepts', 10),
+                debugging: readScore('Debugging', 10),
+                reflection: readScore('Reflection', 5)
+              };
+              if (Object.values(breakdown).some(v => v === null)) return null;
+              return {
+                score: breakdown.workflow + breakdown.project + breakdown.concepts + breakdown.debugging + breakdown.reflection,
+                breakdown
+              };
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: issueNumber, per_page: 100
+            });
+
+            let manual = null;
+            for (const c of [...comments].sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at))) {
+              if (!allowedGraders.has(c.user?.login?.toLowerCase())) continue;
+              const parsedGrade = parseManualGrade(c.body || '');
+              if (parsedGrade) {
+                manual = { ...parsedGrade, grader: c.user.login };
+                break;
+              }
+            }
+
+            const teacher = manual?.score ?? 0;
+            const total = automatic + teacher;
+            const finalLine = manual ? `${total}/100` : 'pending teacher review';
+            const rows = checks.map(([label, earned, max, detail]) =>
+              `| ${earned === max ? '✅' : earned ? '🟨' : '⬜'} ${label} | ${earned}/${max} | ${detail} |`
+            ).join('\n');
+
+            const status = automatic < 60
+              ? '🟡 **IN PROGRESS — fix the project or submission, then edit this Issue to re-grade.**'
+              : !manual
+                ? '🔵 **AUTOMATIC CHECKS PASSED — awaiting teacher review.**'
+                : `✅ **FINAL SCORE: ${total}/100**`;
+
+            const teacherTemplate = [
+              '```text',
+              '/manual-grade',
+              'Workflow independence: 0/10',
+              'Project evidence: 0/5',
+              'Concepts: 0/10',
+              'Debugging: 0/10',
+              'Reflection: 0/5',
+              '',
+              'Feedback:',
+              'Write concise feedback here.',
+              '```'
+            ].join('\n');
+
+            const scoreBody = `${marker}
+            ## CP5 — Progress & Score
+
+            **Student:** @${student}  
+            **Practice repository:** ${repositoryUrl || 'not provided'}  
+            **Automatic score:** ${automatic}/60  
+            **Teacher score:** ${manual ? `${teacher}/40 by @${manual.grader}` : 'awaiting review'}  
+            **Final score:** ${finalLine}
+
+            | Check | Score | Evidence |
+            |---|---:|---|
+            ${rows}
+            | 🧑‍🏫 Teacher review | ${manual ? `${teacher}/40` : '—/40'} | ${manual ? `graded by @${manual.grader}` : 'awaiting review'} |
+
+            ${status}
+
+            ### 🧑‍🏫 Teacher grading
+
+            Review the student's external repository, merged Pull Request and pre-merge self-check history, GitHub Project/Kanban evidence, explanations, and debugging responses. Then copy this into a new comment:
+
+            ${teacherTemplate}
+
+            **Re-grade:** after the student changes the external repository or this submission, edit this same Issue to run the automatic grader again. Repository, Issue, branch, and Pull Request evidence are detected automatically.
+            `;
+
+            const existing = comments.find(c => c.user?.type === 'Bot' && c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: scoreBody });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: issueNumber, body: scoreBody });
+            }
+
+            await core.summary
+              .addHeading(`CP5: ${total}/100`)
+              .addRaw(`Automatic: ${automatic}/60\n`)
+              .addRaw(`Teacher: ${manual ? `${teacher}/40` : 'awaiting review'}\n`)
+              .write();
